@@ -1,0 +1,12 @@
+[server]
+port = 4242
+# generated with `ssh-keygen -t ed25519 -C tailpipe -f server_key`
+host_key = "./server_key"
+
+[user.demo]
+castfile = "./casts/demo.cast"
+
+[user.default]
+header = "./casts/header.cast"
+castfile = "./casts/default.cast"
+footer = "./casts/footer.cast"
