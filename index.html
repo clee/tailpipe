@@ -1,0 +1,979 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tailpipe — Play back terminal recordings over SSH</title>
+  <meta name="description" content="Tailpipe is a Rust-based SSH server that plays back prerecorded terminal sessions in asciinema format. SSH in, watch the show.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #0a0e14;
+      --bg-secondary: #111820;
+      --bg-terminal: #1a1e28;
+      --bg-alt: #0d1219;
+      --text-primary: #e6e6e6;
+      --text-secondary: #8b949e;
+      --accent: #58a6ff;
+      --accent-green: #3fb950;
+      --accent-yellow: #d29922;
+      --accent-purple: #bc8cff;
+      --accent-red: #f85149;
+      --accent-orange: #f0883e;
+      --accent-cyan: #56d4dd;
+      --border: #21262d;
+      --mono: 'JetBrains Mono', monospace;
+      --sans: 'Outfit', sans-serif;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html {
+      scroll-behavior: smooth;
+      scroll-padding-top: 80px;
+    }
+
+    body {
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: var(--sans);
+      font-weight: 400;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      position: relative;
+    }
+
+    /* Ambient background glow */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 80% 50% at 50% -10%, rgba(88, 166, 255, 0.06) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 40% at 70% 100%, rgba(188, 140, 255, 0.03) 0%, transparent 50%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    body > * { position: relative; z-index: 1; }
+
+    a { color: var(--accent); text-decoration: none; transition: color 0.2s, opacity 0.2s; }
+    a:hover { opacity: 0.85; }
+    a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+    code { font-family: var(--mono); font-size: 0.85em; color: var(--accent); }
+
+    .container { max-width: 1100px; margin: 0 auto; padding: 0 1.5rem; }
+
+    /* ---- Navbar ---- */
+    .navbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(10, 14, 20, 0.8);
+      backdrop-filter: blur(16px) saturate(1.2);
+      -webkit-backdrop-filter: blur(16px) saturate(1.2);
+      border-bottom: 1px solid var(--border);
+    }
+    .navbar .container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 64px;
+    }
+    .logo {
+      font-family: var(--mono);
+      font-weight: 700;
+      font-size: 1.25rem;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+    .logo .pipe {
+      color: var(--accent);
+      text-shadow: 0 0 10px rgba(88, 166, 255, 0.4);
+      animation: pipePulse 3s ease-in-out infinite;
+    }
+    .navbar nav { display: flex; gap: 1.5rem; align-items: center; }
+    .navbar nav a {
+      color: var(--text-secondary);
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: color 0.2s;
+      letter-spacing: 0.01em;
+    }
+    .navbar nav a:hover { color: var(--text-primary); opacity: 1; }
+    .github-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .github-link svg { width: 18px; height: 18px; fill: currentColor; }
+
+    /* ---- Hero ---- */
+    .hero {
+      padding: 7rem 1.5rem 5rem;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    /* Dot grid behind hero */
+    .hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image: radial-gradient(rgba(88, 166, 255, 0.08) 1px, transparent 1px);
+      background-size: 28px 28px;
+      -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black 20%, transparent 70%);
+      mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black 20%, transparent 70%);
+      pointer-events: none;
+    }
+    .hero h1 {
+      font-family: var(--sans);
+      font-size: clamp(2.25rem, 5.5vw, 3.5rem);
+      font-weight: 700;
+      line-height: 1.15;
+      margin-bottom: 1.25rem;
+      letter-spacing: -0.03em;
+      animation: fadeUp 0.8s ease both;
+    }
+    .hero h1 .gradient-text {
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-purple) 50%, var(--accent-cyan) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero .subtitle {
+      font-size: clamp(1.05rem, 2.5vw, 1.2rem);
+      color: var(--text-secondary);
+      max-width: 560px;
+      margin: 0 auto 2.5rem;
+      font-weight: 400;
+      line-height: 1.7;
+      animation: fadeUp 0.8s ease both;
+      animation-delay: 0.12s;
+    }
+    .hero .terminal {
+      animation: fadeUp 0.8s ease both, glow 4s ease-in-out 1s infinite;
+      animation-delay: 0.28s, 1.1s;
+    }
+    .hero-buttons {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      margin-top: 2.5rem;
+      flex-wrap: wrap;
+      animation: fadeUp 0.8s ease both;
+      animation-delay: 0.45s;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.75rem;
+      border-radius: 8px;
+      font-family: var(--sans);
+      font-size: 0.95rem;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+    }
+    .btn:hover { transform: translateY(-2px); opacity: 1; }
+    .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .btn-primary {
+      background: var(--accent);
+      color: var(--bg-primary);
+    }
+    .btn-primary:hover { box-shadow: 0 6px 24px rgba(88, 166, 255, 0.3); }
+    .btn-secondary {
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { border-color: var(--text-secondary); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); }
+    .btn-secondary svg { width: 18px; height: 18px; fill: currentColor; }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(24px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes pipePulse {
+      0%, 100% { text-shadow: 0 0 8px rgba(88, 166, 255, 0.3); }
+      50% { text-shadow: 0 0 18px rgba(88, 166, 255, 0.6), 0 0 40px rgba(88, 166, 255, 0.15); }
+    }
+
+    /* ---- Terminal mockup ---- */
+    .terminal {
+      background: var(--bg-terminal);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      max-width: 620px;
+      margin: 0 auto;
+      overflow: hidden;
+      position: relative;
+    }
+    /* Scanline effect */
+    .terminal::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 0, 0, 0.03) 2px,
+        rgba(0, 0, 0, 0.03) 4px
+      );
+      pointer-events: none;
+      border-radius: 12px;
+    }
+    .terminal-titlebar {
+      background: #2d333b;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .terminal-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+    .dot-red { background: var(--accent-red); }
+    .dot-yellow { background: var(--accent-yellow); }
+    .dot-green { background: var(--accent-green); }
+    .terminal-body {
+      padding: 20px;
+      font-family: var(--mono);
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text-primary);
+      min-height: 310px;
+      text-align: left;
+    }
+    .terminal-body .prompt { color: var(--accent-green); }
+    .terminal-body .cmd { color: var(--text-primary); }
+    .terminal-body .dim { color: var(--text-secondary); }
+
+    @keyframes glow {
+      0%, 100% { box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4), 0 0 30px rgba(88, 166, 255, 0.05); }
+      50% { box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4), 0 0 80px rgba(88, 166, 255, 0.1), 0 0 120px rgba(88, 166, 255, 0.03); }
+    }
+
+    @keyframes blink {
+      0%, 50% { opacity: 1; }
+      51%, 100% { opacity: 0; }
+    }
+    .cursor {
+      display: inline-block;
+      width: 8px;
+      height: 1.15em;
+      background: var(--accent-green);
+      animation: blink 1s step-end infinite;
+      vertical-align: text-bottom;
+      margin-left: 1px;
+    }
+
+    /* ---- Sections ---- */
+    section { padding: 5.5rem 1.5rem; }
+    .section-alt { background: var(--bg-alt); }
+    .section-title {
+      font-family: var(--sans);
+      font-size: clamp(1.5rem, 3vw, 2.25rem);
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 0.75rem;
+      letter-spacing: -0.02em;
+    }
+    .section-subtitle {
+      text-align: center;
+      color: var(--text-secondary);
+      max-width: 480px;
+      margin: 0 auto 3rem;
+      font-weight: 400;
+    }
+
+    /* ---- Features ---- */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.25rem;
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+    .feature-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+    }
+    .feature-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+    }
+    .feature-card:nth-child(1):hover { border-color: var(--accent); box-shadow: 0 8px 30px rgba(88, 166, 255, 0.08); }
+    .feature-card:nth-child(2):hover { border-color: var(--accent-green); box-shadow: 0 8px 30px rgba(63, 185, 80, 0.08); }
+    .feature-card:nth-child(3):hover { border-color: var(--accent-purple); box-shadow: 0 8px 30px rgba(188, 140, 255, 0.08); }
+    .feature-card:nth-child(4):hover { border-color: var(--accent-yellow); box-shadow: 0 8px 30px rgba(210, 153, 34, 0.08); }
+    .feature-card:nth-child(5):hover { border-color: var(--accent-orange); box-shadow: 0 8px 30px rgba(240, 136, 62, 0.08); }
+    .feature-card:nth-child(6):hover { border-color: var(--accent-red); box-shadow: 0 8px 30px rgba(248, 81, 73, 0.08); }
+    .feature-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      margin-bottom: 0.85rem;
+    }
+    .feature-icon svg {
+      width: 20px;
+      height: 20px;
+      stroke-width: 2;
+      fill: none;
+    }
+    .feature-icon-blue    { background: rgba(88, 166, 255, 0.1); color: var(--accent); }
+    .feature-icon-green   { background: rgba(63, 185, 80, 0.1); color: var(--accent-green); }
+    .feature-icon-purple  { background: rgba(188, 140, 255, 0.1); color: var(--accent-purple); }
+    .feature-icon-yellow  { background: rgba(210, 153, 34, 0.1); color: var(--accent-yellow); }
+    .feature-icon-orange  { background: rgba(240, 136, 62, 0.1); color: var(--accent-orange); }
+    .feature-icon-red     { background: rgba(248, 81, 73, 0.1); color: var(--accent-red); }
+    .feature-icon svg { stroke: currentColor; }
+    .feature-icon-text {
+      font-family: var(--mono);
+      font-size: 0.95rem;
+      font-weight: 700;
+    }
+    .feature-card h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 0.4rem;
+      letter-spacing: -0.01em;
+    }
+    .feature-card p {
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      line-height: 1.55;
+    }
+
+    /* ---- Controls ---- */
+    .controls-content {
+      max-width: 800px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2.5rem;
+      align-items: start;
+    }
+    .controls-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1.1rem;
+    }
+    .control-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .key {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(180deg, #3d4450, #2d333b);
+      border: 1px solid #444c56;
+      border-bottom: 3px solid #1c2028;
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      color: var(--text-primary);
+      min-width: 42px;
+      text-align: center;
+      white-space: nowrap;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    .key:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
+    }
+    .control-label {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+    }
+    .overlay-mockup {
+      background: var(--bg-terminal);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.5rem;
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      position: relative;
+      overflow: hidden;
+    }
+    /* CRT flicker line */
+    .overlay-mockup::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: rgba(88, 166, 255, 0.15);
+      animation: scanMove 3s linear infinite;
+    }
+    @keyframes scanMove {
+      0% { top: -1px; }
+      100% { top: 100%; }
+    }
+    .overlay-mockup .overlay-title {
+      color: var(--accent);
+      text-align: center;
+      font-weight: 700;
+      font-size: 0.9rem;
+      margin-bottom: 0.5rem;
+      letter-spacing: 0.05em;
+    }
+    .overlay-mockup .overlay-time {
+      text-align: center;
+      color: var(--text-primary);
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+    }
+    .overlay-controls {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 0.3rem 1.25rem;
+      line-height: 1.8;
+    }
+    .overlay-controls .ctrl-key { color: var(--text-primary); }
+    .overlay-controls .ctrl-desc { color: var(--text-secondary); }
+
+    /* ---- Config ---- */
+    .config-wrapper {
+      max-width: 860px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1.3fr 1fr;
+      gap: 2.5rem;
+      align-items: start;
+    }
+    .config-terminal {
+      background: var(--bg-terminal);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+    }
+    .config-terminal .terminal-titlebar {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+    .config-terminal .terminal-titlebar span {
+      margin-left: auto;
+    }
+    .config-block {
+      padding: 20px;
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      line-height: 1.7;
+      overflow-x: auto;
+    }
+    .config-block code { font-family: inherit; color: inherit; font-size: inherit; }
+    .toml-comment { color: var(--text-secondary); font-style: italic; }
+    .toml-section { color: var(--accent-purple); }
+    .toml-key { color: var(--accent); }
+    .toml-string { color: var(--accent-green); }
+    .toml-number { color: var(--accent-yellow); }
+    .config-notes {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+    .config-note {
+      padding-left: 1.25rem;
+      border-left: 2px solid var(--border);
+      transition: border-color 0.3s;
+    }
+    .config-note:hover { border-color: var(--accent); }
+    .config-note h4 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 0.3rem;
+    }
+    .config-note p {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      line-height: 1.55;
+    }
+
+    /* ---- Get Started ---- */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1.25rem;
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+    .step {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      transition: border-color 0.25s;
+    }
+    .step:hover { border-color: var(--accent); }
+    .step-number {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: rgba(88, 166, 255, 0.12);
+      color: var(--accent);
+      font-family: var(--mono);
+      font-weight: 700;
+      font-size: 0.85rem;
+      margin-bottom: 0.75rem;
+    }
+    .step h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+    .step pre {
+      background: var(--bg-terminal);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      line-height: 1.6;
+      overflow-x: auto;
+      color: var(--text-primary);
+    }
+    .step pre .prompt { color: var(--accent-green); }
+
+    /* ---- Footer ---- */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 4rem 1.5rem 3rem;
+      text-align: center;
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+    }
+    footer .logo {
+      font-size: 1.3rem;
+      display: block;
+      margin-bottom: 1rem;
+    }
+    footer p { margin-bottom: 0.5rem; }
+    footer .footer-tagline {
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      margin-bottom: 1rem;
+      opacity: 0.7;
+    }
+    footer .footer-links {
+      display: flex;
+      gap: 1.5rem;
+      justify-content: center;
+      margin-top: 0.5rem;
+    }
+    footer a { color: var(--text-secondary); transition: color 0.2s; }
+    footer a:hover { color: var(--text-primary); opacity: 1; }
+
+    /* ---- Scroll reveal ---- */
+    .fade-in {
+      opacity: 0;
+      transform: translateY(24px);
+      transition: opacity 0.7s ease, transform 0.7s ease;
+    }
+    .fade-in.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ---- Reduced motion ---- */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+      html { scroll-behavior: auto; }
+      .fade-in { opacity: 1; transform: none; }
+      .hero h1, .hero .subtitle, .hero .terminal, .hero-buttons {
+        animation: none;
+        opacity: 1;
+        transform: none;
+      }
+    }
+
+    /* ---- Responsive ---- */
+    @media (max-width: 900px) {
+      .features-grid { grid-template-columns: repeat(2, 1fr); }
+      .controls-content { grid-template-columns: 1fr; }
+      .config-wrapper { grid-template-columns: 1fr; }
+      .steps { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 600px) {
+      .features-grid { grid-template-columns: 1fr; }
+      .steps { grid-template-columns: 1fr; }
+      .navbar .container { padding: 0 1rem; }
+      .navbar nav { gap: 0.6rem; }
+      .navbar nav a { font-size: 0.8rem; }
+      section { padding: 3.5rem 1rem; }
+      .hero { padding: 4.5rem 1rem 3rem; }
+      .hero h1 { font-size: clamp(1.75rem, 7vw, 2.5rem); }
+      .terminal-body { font-size: 12px; padding: 14px; min-height: 220px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navbar -->
+  <header class="navbar">
+    <div class="container">
+      <a href="#" class="logo">tail<span class="pipe">|</span>pipe</a>
+      <nav aria-label="Main navigation">
+        <a href="#features">Features</a>
+        <a href="#controls">Controls</a>
+        <a href="#config">Config</a>
+        <a href="#install">Install</a>
+        <a href="https://github.com/clee/tailpipe" class="github-link" target="_blank" rel="noopener">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          GitHub
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- Hero -->
+    <section class="hero">
+      <div class="container">
+        <h1>Play back terminal recordings <span class="gradient-text">over SSH</span></h1>
+        <p class="subtitle">Tailpipe is an SSH server that streams prerecorded terminal sessions. Your users SSH in, watch the show, and interact with playback controls.</p>
+
+        <div class="terminal">
+          <div class="terminal-titlebar">
+            <div class="terminal-dot dot-red"></div>
+            <div class="terminal-dot dot-yellow"></div>
+            <div class="terminal-dot dot-green"></div>
+          </div>
+          <div class="terminal-body">
+            <pre id="typed-output"></pre>
+          </div>
+        </div>
+
+        <div class="hero-buttons">
+          <a href="#install" class="btn btn-primary">Get Started</a>
+          <a href="https://github.com/clee/tailpipe" class="btn btn-secondary" target="_blank" rel="noopener">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+            View on GitHub
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section id="features" class="section-alt fade-in">
+      <div class="container">
+        <h2 class="section-title">Features</h2>
+        <p class="section-subtitle">Everything you need to serve interactive terminal demos.</p>
+
+        <div class="features-grid">
+          <div class="feature-card">
+            <div class="feature-icon feature-icon-blue">
+              <svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            </div>
+            <h3>SSH Native</h3>
+            <p>No browser needed. Connect with any SSH client and start watching immediately.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon feature-icon-green">
+              <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </div>
+            <h3>Asciinema Playback</h3>
+            <p>Plays back .cast files in asciinema v2 and v3 formats with frame-accurate timing.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon feature-icon-purple">
+              <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </div>
+            <h3>Multi-User</h3>
+            <p>Configure different recordings per SSH username with a default fallback for unknown users.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon feature-icon-yellow">
+              <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            </div>
+            <h3>Simple Config</h3>
+            <p>One TOML file configures everything &mdash; cast files, headers, footers, and per-user overrides.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon feature-icon-orange">
+              <svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+            </div>
+            <h3>Headers &amp; Footers</h3>
+            <p>Bookend recordings with branded intro and outro sequences. Disable per-user as needed.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon feature-icon-red">
+              <svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            </div>
+            <h3>Pure Rust</h3>
+            <p>Built with russh, tokio, and ratatui. Async, fast, and memory-safe.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Controls -->
+    <section id="controls" class="fade-in">
+      <div class="container">
+        <h2 class="section-title">Interactive Playback</h2>
+        <p class="section-subtitle">Pause, seek, and navigate recordings with keyboard controls.</p>
+
+        <div class="controls-content">
+          <div class="controls-list">
+            <div class="control-row">
+              <span class="key">Space</span>
+              <span class="control-label">Pause / Resume</span>
+            </div>
+            <div class="control-row">
+              <span class="key">&larr;</span>
+              <span class="key">&rarr;</span>
+              <span class="control-label">Seek &plusmn;5 seconds</span>
+            </div>
+            <div class="control-row">
+              <span class="key">o</span>
+              <span class="control-label">Toggle overlay</span>
+            </div>
+            <div class="control-row">
+              <span class="key">q</span>
+              <span class="control-label">Quit</span>
+            </div>
+          </div>
+
+          <div class="overlay-mockup">
+            <div class="overlay-title">&#9646;&#9646; PAUSED</div>
+            <div class="overlay-time">01:23 / 02:34</div>
+            <div class="overlay-controls">
+              <span class="ctrl-key">space</span><span class="ctrl-desc">pause/resume</span>
+              <span class="ctrl-key">&lt;-/-&gt;</span><span class="ctrl-desc">seek &plusmn;5s</span>
+              <span class="ctrl-key">o</span><span class="ctrl-desc">toggle overlay</span>
+              <span class="ctrl-key">q</span><span class="ctrl-desc">quit</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Config -->
+    <section id="config" class="section-alt fade-in">
+      <div class="container">
+        <h2 class="section-title">Configure in seconds</h2>
+        <p class="section-subtitle">One TOML file is all you need.</p>
+
+        <div class="config-wrapper">
+          <div class="config-terminal">
+            <div class="terminal-titlebar">
+              <div class="terminal-dot dot-red"></div>
+              <div class="terminal-dot dot-yellow"></div>
+              <div class="terminal-dot dot-green"></div>
+              <span>tailpipe.toml</span>
+            </div>
+            <pre class="config-block"><code><span class="toml-section">[server]</span>
+<span class="toml-key">port</span> = <span class="toml-number">4242</span>
+<span class="toml-key">host_key</span> = <span class="toml-string">"/etc/tailpipe_ed25519.key"</span>
+<span class="toml-key">header</span> = <span class="toml-string">"/srv/casts/header.cast"</span>
+<span class="toml-key">footer</span> = <span class="toml-string">"/srv/casts/footer.cast"</span>
+
+<span class="toml-comment"># SSH in as demo@ to see demo.cast</span>
+<span class="toml-section">[user.demo]</span>
+<span class="toml-key">castfile</span> = <span class="toml-string">"/srv/casts/demo.cast"</span>
+
+<span class="toml-comment"># SSH in as custom@ to see custom.cast</span>
+<span class="toml-section">[user.custom]</span>
+<span class="toml-key">castfile</span> = <span class="toml-string">"/srv/casts/custom.cast"</span>
+<span class="toml-key">header</span> = <span class="toml-string">"none"</span>
+<span class="toml-key">footer</span> = <span class="toml-string">"none"</span>
+
+<span class="toml-comment"># fallback for unknown usernames</span>
+<span class="toml-section">[user.default]</span>
+<span class="toml-key">castfile</span> = <span class="toml-string">"/srv/casts/default.cast"</span></code></pre>
+          </div>
+
+          <div class="config-notes">
+            <div class="config-note">
+              <h4>Optional host key</h4>
+              <p>Generates an ephemeral ed25519 key if you don't provide one. Great for development.</p>
+            </div>
+            <div class="config-note">
+              <h4>Per-user recordings</h4>
+              <p>Map SSH usernames to different cast files. Unknown users fall back to the <code>default</code> section.</p>
+            </div>
+            <div class="config-note">
+              <h4>Flexible headers &amp; footers</h4>
+              <p>Set server-wide intro/outro sequences or override them per user. Set to <code>"none"</code> to disable.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Install -->
+    <section id="install" class="fade-in">
+      <div class="container">
+        <h2 class="section-title">Get started</h2>
+        <p class="section-subtitle">Up and running in under a minute.</p>
+
+        <div class="steps">
+          <div class="step">
+            <div class="step-number">1</div>
+            <h3>Install</h3>
+            <pre><span class="prompt">$</span> cargo install tailpipe</pre>
+          </div>
+          <div class="step">
+            <div class="step-number">2</div>
+            <h3>Configure</h3>
+            <pre><span class="prompt">$</span> vim tailpipe.toml</pre>
+          </div>
+          <div class="step">
+            <div class="step-number">3</div>
+            <h3>Run</h3>
+            <pre><span class="prompt">$</span> tailpipe tailpipe.toml</pre>
+          </div>
+          <div class="step">
+            <div class="step-number">4</div>
+            <h3>Connect</h3>
+            <pre><span class="prompt">$</span> ssh demo@localhost -p 4242</pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container">
+      <a href="#" class="logo">tail<span class="pipe">|</span>pipe</a>
+      <p class="footer-tagline">Terminal sessions, delivered.</p>
+      <p>Built with Rust, russh, tokio, and ratatui.</p>
+      <div class="footer-links">
+        <a href="https://github.com/clee/tailpipe" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/clee/tailpipe/issues" target="_blank" rel="noopener">Issues</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // Typing animation for the hero terminal
+    (function () {
+      var el = document.getElementById('typed-output');
+      if (!el) return;
+
+      var lines = [
+        { text: '$ ssh demo@tailpipe.example.com', type: 'cmd', speed: 55 },
+        { text: '', type: 'blank', speed: 0, pause: 400 },
+        { text: 'Connected to tailpipe v0.1.0', type: 'dim', speed: 0, pause: 300 },
+        { text: '', type: 'blank', speed: 0, pause: 200 },
+        { text: '  Playing: demo.cast', type: 'out', speed: 0, pause: 100 },
+        { text: '  Duration: 02:34', type: 'out', speed: 0, pause: 400 },
+        { text: '', type: 'blank', speed: 0, pause: 200 },
+        { text: '  space     pause/resume', type: 'dim', speed: 0, pause: 80 },
+        { text: '  \u2190/\u2192       seek \u00b15s', type: 'dim', speed: 0, pause: 80 },
+        { text: '  o         toggle overlay', type: 'dim', speed: 0, pause: 80 },
+        { text: '  q         quit', type: 'dim', speed: 0, pause: 600 },
+      ];
+
+      var cursor = document.createElement('span');
+      cursor.className = 'cursor';
+
+      function run() {
+        el.textContent = '';
+        el.appendChild(cursor);
+        var li = 0;
+
+        function nextLine() {
+          if (li >= lines.length) {
+            setTimeout(function () { run(); }, 3000);
+            return;
+          }
+          var line = lines[li++];
+          var span = document.createElement('span');
+          if (line.type === 'cmd') span.className = 'cmd';
+          else if (line.type === 'dim') span.className = 'dim';
+
+          if (line.type === 'cmd') {
+            var promptSpan = document.createElement('span');
+            promptSpan.className = 'prompt';
+            promptSpan.textContent = '$ ';
+            el.insertBefore(promptSpan, cursor);
+            var cmdText = line.text.slice(2);
+            var ci = 0;
+            function typeChar() {
+              if (ci < cmdText.length) {
+                span.textContent += cmdText[ci++];
+                el.insertBefore(span, cursor);
+                setTimeout(typeChar, line.speed);
+              } else {
+                el.insertBefore(document.createTextNode('\n'), cursor);
+                setTimeout(nextLine, line.pause || 500);
+              }
+            }
+            typeChar();
+          } else {
+            span.textContent = line.text;
+            el.insertBefore(span, cursor);
+            el.insertBefore(document.createTextNode('\n'), cursor);
+            setTimeout(nextLine, line.pause || 100);
+          }
+        }
+        nextLine();
+      }
+
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        lines.forEach(function (line) {
+          var span = document.createElement('span');
+          if (line.type === 'cmd') span.className = 'cmd';
+          else if (line.type === 'dim') span.className = 'dim';
+          span.textContent = line.text;
+          el.appendChild(span);
+          el.appendChild(document.createTextNode('\n'));
+        });
+      } else {
+        run();
+      }
+    })();
+
+    // Scroll reveal
+    (function () {
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      var observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting) {
+            e.target.classList.add('visible');
+            observer.unobserve(e.target);
+          }
+        });
+      }, { threshold: 0.1 });
+      document.querySelectorAll('.fade-in').forEach(function (el) {
+        observer.observe(el);
+      });
+    })();
+  </script>
+
+</body>
+</html>
