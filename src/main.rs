@@ -35,12 +35,20 @@ async fn main() -> Result<()> {
         log::info!("no host_key configured, generating ephemeral key");
         PrivateKey::random(&mut OsRng, russh::keys::Algorithm::Ed25519)?
     };
+    
+    let host_key_rsa = if let Some(path) = &app_config.server.host_key_rsa {
+        log::info!("loading RSA host key from {path}");
+        russh::keys::load_secret_key(path, None)?
+    } else {
+        log::info!("no RSA host_key configured, generating ephemeral RSA key");
+        PrivateKey::random(&mut OsRng, russh::keys::Algorithm::Rsa { hash: None })?
+    };
 
     let ssh_config = russh::server::Config {
         inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
         auth_rejection_time: std::time::Duration::from_secs(0),
         auth_rejection_time_initial: Some(std::time::Duration::from_secs(0)),
-        keys: vec![host_key],
+        keys: vec![host_key, host_key_rsa],
         ..Default::default()
     };
 

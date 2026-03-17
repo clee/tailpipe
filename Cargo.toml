@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-russh = { version = "0.57", default-features = false, features = ["aws-lc-rs"] }
+russh = { version = "0.57", default-features = false, features = ["ring", "rsa"] }
 tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }

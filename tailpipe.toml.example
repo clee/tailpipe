@@ -2,6 +2,8 @@
 port = 4242
 # generated with `ssh-keygen -t ed25519 -C tailpipe -f server_key`
 host_key = "./server_key"
+# generated with `ssh-keygen -t rsa -C tailpipe -f server_key_rsa`
+host_key_rsa = "./server_key_rsa"
 
 [user.demo]
 castfile = "./casts/demo.cast"
