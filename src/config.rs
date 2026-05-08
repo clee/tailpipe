@@ -16,6 +16,7 @@ pub struct ServerConfig {
     #[serde(default = "default_port")]
     pub port: u16,
     pub host_key: Option<String>,
+    pub host_key_rsa: Option<String>,
     pub header: Option<String>,
     pub footer: Option<String>,
 }

@@ -17,6 +17,7 @@ An SSH server that plays back terminal recordings in [asciinema](https://asciine
 [server]
 port = 4242
 host_key = "/etc/tailpipe_ed25519.key"  # optional, generates ephemeral key if omitted
+host_key_rsa = "/etc/tailpipe_rsa.key"  # optional, generates ephemeral key if omitted
 header = "/srv/casts/header.cast"       # played before every session
 footer = "/srv/casts/footer.cast"       # played after every session
 
