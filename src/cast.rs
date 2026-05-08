@@ -340,37 +340,15 @@ pub async fn play_interactive(
     Ok(())
 }
 
-async fn seek_to(
+async fn send_data(
     handle: &Handle,
     channel: ChannelId,
-    events: &[(f64, String, String)],
-    target: Duration,
-    next_idx: &mut usize,
-    current_time: &mut Duration,
+    data: &[u8],
 ) -> Result<()> {
     handle
-        .data(channel, CryptoVec::from_slice(b"\x1b[2J\x1b[H"))
+        .data(channel, CryptoVec::from_slice(data))
         .await
-        .map_err(|_| anyhow::anyhow!("send error"))?;
-
-    for (i, (time, code, data)) in events.iter().enumerate() {
-        if code != "o" {
-            continue;
-        }
-        if Duration::from_secs_f64(*time) > target {
-            *next_idx = i;
-            *current_time = target;
-            return Ok(());
-        }
-        handle
-            .data(channel, CryptoVec::from_slice(data.as_bytes()))
-            .await
-            .map_err(|_| anyhow::anyhow!("send error"))?;
-    }
-
-    *next_idx = events.len();
-    *current_time = target;
-    Ok(())
+        .map_err(|_| anyhow::anyhow!("send error"))
 }
 
 async fn restore_screen(
@@ -379,21 +357,37 @@ async fn restore_screen(
     events: &[(f64, String, String)],
     up_to_idx: usize,
 ) -> Result<()> {
-    handle
-        .data(channel, CryptoVec::from_slice(b"\x1b[2J\x1b[H"))
-        .await
-        .map_err(|_| anyhow::anyhow!("send error"))?;
+    send_data(handle, channel, b"\x1b[2J\x1b[H").await?;
 
     for (_, code, data) in &events[..up_to_idx] {
         if code != "o" {
             continue;
         }
-        handle
-            .data(channel, CryptoVec::from_slice(data.as_bytes()))
-            .await
-            .map_err(|_| anyhow::anyhow!("send error"))?;
+        send_data(handle, channel, data.as_bytes()).await?;
     }
 
+    Ok(())
+}
+
+async fn seek_to(
+    handle: &Handle,
+    channel: ChannelId,
+    events: &[(f64, String, String)],
+    target: Duration,
+    next_idx: &mut usize,
+    current_time: &mut Duration,
+) -> Result<()> {
+    let idx = events
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, code, _))| code == "o")
+        .find(|(_, (time, _, _))| Duration::from_secs_f64(*time) > target)
+        .map(|(i, _)| i)
+        .unwrap_or(events.len());
+
+    restore_screen(handle, channel, events, idx).await?;
+    *next_idx = idx;
+    *current_time = target;
     Ok(())
 }
 

@@ -98,6 +98,22 @@ struct TailpipeHandler {
     pty_size: Option<(u16, u16)>,
 }
 
+async fn play_optional_cast(
+    label: &str,
+    path: Option<&str>,
+    channel: ChannelId,
+    handle: &russh::server::Handle,
+    user: &str,
+) {
+    let Some(path) = path else { return };
+    if path == "none" {
+        return;
+    }
+    if let Err(e) = cast::play(&PathBuf::from(path), channel, handle.clone()).await {
+        log::error!("{label} playback error for {user}: {e:#}");
+    }
+}
+
 impl server::Handler for TailpipeHandler {
     type Error = anyhow::Error;
 
@@ -186,19 +202,14 @@ impl server::Handler for TailpipeHandler {
         tokio::spawn(async move {
             if let Some(user_config) = user_config {
                 // Play header cast (user override or server default)
-                let header = user_config
-                    .header
-                    .as_deref()
-                    .or(server_config_header.as_deref());
-                if let Some(path) = header {
-                    if path != "none" {
-                        if let Err(e) =
-                            cast::play(&PathBuf::from(path), channel, handle.clone()).await
-                        {
-                            log::error!("header playback error for {user}: {e:#}");
-                        }
-                    }
-                }
+                play_optional_cast(
+                    "header",
+                    user_config.header.as_deref().or(server_config_header.as_deref()),
+                    channel,
+                    &handle,
+                    &user,
+                )
+                .await;
 
                 // Play the main cast file (interactive)
                 let castfile = PathBuf::from(&user_config.castfile);
@@ -210,19 +221,14 @@ impl server::Handler for TailpipeHandler {
                 }
 
                 // Play footer cast (user override or server default)
-                let footer = user_config
-                    .footer
-                    .as_deref()
-                    .or(server_config_footer.as_deref());
-                if let Some(path) = footer {
-                    if path != "none" {
-                        if let Err(e) =
-                            cast::play(&PathBuf::from(path), channel, handle.clone()).await
-                        {
-                            log::error!("footer playback error for {user}: {e:#}");
-                        }
-                    }
-                }
+                play_optional_cast(
+                    "footer",
+                    user_config.footer.as_deref().or(server_config_footer.as_deref()),
+                    channel,
+                    &handle,
+                    &user,
+                )
+                .await;
             }
 
             let _ = handle.eof(channel).await;
